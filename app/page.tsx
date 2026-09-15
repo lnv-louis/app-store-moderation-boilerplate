@@ -1,8 +1,10 @@
 import { ReviewQueue } from "@/components/ReviewQueue";
-import { getAllApps } from "@/lib/fanvue/api";
-import { reviewListings } from "@/lib/moderation/rules";
+import { getModerationRun } from "@/lib/moderation/job";
+
+export const dynamic = "force-dynamic";
 
 export default function ReviewQueuePage() {
-  const rows = reviewListings(getAllApps());
-  return <ReviewQueue rows={rows} />;
+  const run = getModerationRun();
+
+  return <ReviewQueue rows={run.reviews} checkedAt={run.ranAt} durationMs={run.durationMs} />;
 }
