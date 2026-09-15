@@ -3,10 +3,20 @@ import Link from "next/link";
 import type { Issue, Review } from "@/lib/moderation/rules";
 import { countBySeverity, sortQueue, worstSeverity } from "@/lib/moderation/queue";
 
+import { RunStatus } from "./RerunButton";
+
 /**
  * The moderator's queue, sorted worst-first with a per-row status and rule summary.
  */
-export function ReviewQueue({ rows }: { rows: Review[] }) {
+export function ReviewQueue({
+  rows,
+  checkedAt,
+  durationMs,
+}: {
+  rows: Review[];
+  checkedAt?: string;
+  durationMs?: number;
+}) {
   const sorted = sortQueue(rows);
   const counts = countBySeverity(rows);
 
@@ -18,6 +28,9 @@ export function ReviewQueue({ rows }: { rows: Review[] }) {
         {counts.fix.toLocaleString()} fix · {counts.warn.toLocaleString()} warn ·{" "}
         {counts.passed.toLocaleString()} passed
       </p>
+      {checkedAt !== undefined && durationMs !== undefined && (
+        <RunStatus count={rows.length} durationMs={durationMs} checkedAt={checkedAt} />
+      )}
 
       <table className="w-full border-collapse text-left text-sm">
         <thead>
