@@ -101,4 +101,22 @@ describe("moderation rules", () => {
 
     expect(findingsFor(listing).map((issue) => issue.code)).toEqual(["empty_highlights"]);
   });
+
+  it("flags disguised competitor platform mentions (1.6)", () => {
+    const leet: AppListing = { ...cleanListing, tagline: "Grow your 0nlyFans and Fans1y faster" };
+    const separated: AppListing = { ...cleanListing, descriptionBody: "Popular destinations include Only.Fans and Patreon." };
+    const spaced: AppListing = { ...cleanListing, tagline: "Just For Fans of scheduling" };
+
+    expect(findingsFor(leet).map((issue) => issue.code)).toEqual(["platform_mention"]);
+    expect(findingsFor(separated).map((issue) => issue.code)).toEqual(["platform_mention"]);
+    expect(findingsFor(spaced).map((issue) => issue.code)).toEqual(["platform_mention"]);
+  });
+
+  it("does not flag innocent uses of only or fans (1.6)", () => {
+    const only: AppListing = { ...cleanListing, descriptionBody: "Post Planner is the only scheduler you need." };
+    const fans: AppListing = { ...cleanListing, tagline: "See where new fans actually came from" };
+
+    expect(findingsFor(only)).toEqual([]);
+    expect(findingsFor(fans)).toEqual([]);
+  });
 });

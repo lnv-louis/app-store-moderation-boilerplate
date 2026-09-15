@@ -41,7 +41,12 @@ export function reviewListings(listings: AppListing[]): Review[] {
 
 /** Every check that only needs the one listing in front of it. */
 function checkListing(listing: AppListing): Issue[] {
-  return [...checkScreenshotCount(listing), ...checkProductionReady(listing), ...checkAppUrl(listing)];
+  return [
+    ...checkPlatformMentions(listing),
+    ...checkProductionReady(listing),
+    ...checkScreenshotCount(listing),
+    ...checkAppUrl(listing),
+  ];
 }
 
 /** Lowercase, optionally fold leet digits to letters, and split on anything non-alphanumeric. */
@@ -66,6 +71,41 @@ function copyFields(listing: AppListing): [field: string, text: string][] {
     ["descriptionBody", listing.descriptionBody],
     ...listing.highlights.map((text, i): [string, string] => [`highlights[${i}]`, text]),
   ];
+}
+
+/**
+ * Rule 1.6: "A listing must not name or promote a competing creator platform…
+ * digits standing in for letters (`0nlyFans`, `Fans1y`), separators inserted
+ * between the words (`only.fans`, `Only Fans`, `only-fans`), or unusual
+ * casing."
+ *
+ * Every window of 1–3 adjacent tokens (leet folded) is compared against the
+ * canonical names, so `only.fans` and `just for fans` collapse to a hit while
+ * a bare `fans` does not.
+ *
+ * `reject` because promoting a competitor is a content bar, not a typo.
+ */
+function checkPlatformMentions(listing: AppListing): Issue[] {
+  const platforms = new Set(["onlyfans", "fansly", "patreon", "loyalfans", "manyvids", "justforfans"]);
+  const issues: Issue[] = [];
+
+  for (const [field, text] of copyFields(listing)) {
+    const tokens = words(text, true);
+    const hit = tokens.some((_, i) =>
+      [1, 2, 3].some((width) => platforms.has(tokens.slice(i, i + width).join(""))),
+    );
+    if (hit) {
+      issues.push({
+        code: "platform_mention",
+        rule: "1.6",
+        severity: "reject",
+        message: `${field} names a competing creator platform: "${text}".`,
+        field,
+      });
+    }
+  }
+
+  return issues;
 }
 
 /**
