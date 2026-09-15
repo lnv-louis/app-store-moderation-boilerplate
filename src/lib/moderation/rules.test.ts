@@ -87,4 +87,18 @@ describe("moderation rules", () => {
     expect(findingsFor(ipHost).map((issue) => issue.code)).toEqual(["app_url_ip_host"]);
     expect(findingsFor(withPort)).toEqual([]);
   });
+
+  it("flags placeholder copy in any casing (2.1)", () => {
+    const lorem: AppListing = { ...cleanListing, descriptionBody: "Lorem ipsum dolor sit amet." };
+    const todo: AppListing = { ...cleanListing, descriptionTitle: "TODO: write this" };
+
+    expect(findingsFor(lorem).map((issue) => issue.code)).toEqual(["placeholder_copy"]);
+    expect(findingsFor(todo).map((issue) => issue.code)).toEqual(["placeholder_copy"]);
+  });
+
+  it("flags empty highlights (2.1)", () => {
+    const listing: AppListing = { ...cleanListing, highlights: [] };
+
+    expect(findingsFor(listing).map((issue) => issue.code)).toEqual(["empty_highlights"]);
+  });
 });

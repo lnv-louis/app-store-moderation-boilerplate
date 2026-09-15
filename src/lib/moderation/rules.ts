@@ -41,7 +41,63 @@ export function reviewListings(listings: AppListing[]): Review[] {
 
 /** Every check that only needs the one listing in front of it. */
 function checkListing(listing: AppListing): Issue[] {
-  return [...checkScreenshotCount(listing), ...checkAppUrl(listing)];
+  return [...checkScreenshotCount(listing), ...checkProductionReady(listing), ...checkAppUrl(listing)];
+}
+
+/** Lowercase, optionally fold leet digits to letters, and split on anything non-alphanumeric. */
+function words(text: string, leet = false): string[] {
+  let lowered = text.toLowerCase();
+  if (leet) {
+    lowered = lowered.replace(/[013457]/g, (digit) => ({ 0: "o", 1: "l", 3: "e", 4: "a", 5: "s", 7: "t" })[digit]!);
+  }
+  return lowered.split(/[^a-z0-9]+/).filter((token) => token.length > 0);
+}
+
+/**
+ * §1.6: "the app name, tagline, description, description title and body, and
+ * the listing highlights."
+ */
+function copyFields(listing: AppListing): [field: string, text: string][] {
+  return [
+    ["name", listing.name],
+    ["tagline", listing.tagline],
+    ["description", listing.description],
+    ["descriptionTitle", listing.descriptionTitle],
+    ["descriptionBody", listing.descriptionBody],
+    ...listing.highlights.map((text, i): [string, string] => [`highlights[${i}]`, text]),
+  ];
+}
+
+/**
+ * Rule 2.1: "the markers we see are consistent: `lorem`, `ipsum`, `TODO`,
+ * `TBD`, `FIXME`, `coming soon`, `placeholder`, `sample text`. Empty listing
+ * highlights are the other common sign of a listing submitted half-written."
+ *
+ * `fix` because deleting the placeholder or adding highlights is mechanical.
+ */
+function checkProductionReady(listing: AppListing): Issue[] {
+  const markers = /\b(lorem|ipsum|todo|tbd|fixme|coming soon|placeholder|sample text)\b/;
+  const issues: Issue[] = copyFields(listing)
+    .filter(([, text]) => markers.test(words(text, true).join(" ")))
+    .map(([field]) => ({
+      code: "placeholder_copy",
+      rule: "2.1",
+      severity: "fix",
+      message: `${field} still carries draft or placeholder copy.`,
+      field,
+    }));
+
+  if (listing.highlights.filter((highlight) => highlight.trim()).length === 0) {
+    issues.push({
+      code: "empty_highlights",
+      rule: "2.1",
+      severity: "fix",
+      message: "No listing highlights; rule 2.1 reads that as a half-written submission.",
+      field: "highlights",
+    });
+  }
+
+  return issues;
 }
 
 /**
