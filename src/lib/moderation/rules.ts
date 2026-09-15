@@ -25,6 +25,13 @@ export type Review = {
   issues: Issue[];
 };
 
+const PLATFORMS = ["onlyfans", "fansly", "patreon", "loyalfans", "manyvids", "justforfans"];
+
+// assumption, see ASSUMPTIONS.md
+const DUPLICATE_THRESHOLD = 0.5;
+// assumption, see ASSUMPTIONS.md
+const SHINGLE_SIZE = 3;
+
 /**
  * Reviews a set of listings and returns the findings for each, in the order
  * they came in.
@@ -51,11 +58,16 @@ function checkListing(listing: AppListing): Issue[] {
   ];
 }
 
+/** Fold leet digits to the letters they stand in for (`0nly` → `only`). */
+function leetFold(text: string): string {
+  return text.replace(/[013457]/g, (digit) => ({ 0: "o", 1: "l", 3: "e", 4: "a", 5: "s", 7: "t" })[digit]!);
+}
+
 /** Lowercase, optionally fold leet digits to letters, and split on anything non-alphanumeric. */
 function words(text: string, leet = false): string[] {
   let lowered = text.toLowerCase();
   if (leet) {
-    lowered = lowered.replace(/[013457]/g, (digit) => ({ 0: "o", 1: "l", 3: "e", 4: "a", 5: "s", 7: "t" })[digit]!);
+    lowered = leetFold(lowered);
   }
   return lowered.split(/[^a-z0-9]+/).filter((token) => token.length > 0);
 }
@@ -82,19 +94,39 @@ function copyFields(listing: AppListing): [field: string, text: string][] {
  * casing."
  *
  * Every window of 1–3 adjacent tokens (leet folded) is compared against the
- * canonical names, so `only.fans` and `just for fans` collapse to a hit while
- * a bare `fans` does not.
+ * canonical names. A single-token window always counts (`0nlyFans`,
+ * `onlyFANS`); a multi-token window only counts when the original text of
+ * the window shows a disguise signal — "digits standing in for letters
+ * (`0nlyFans`, `Fans1y`), separators inserted between the words
+ * (`only.fans`, `Only Fans`, `only-fans`), or unusual casing" — so plain
+ * prose like "just for fans of scheduling" does not trip the rule.
  *
  * `reject` because promoting a competitor is a content bar, not a typo.
  */
 function checkPlatformMentions(listing: AppListing): Issue[] {
-  const platforms = new Set(["onlyfans", "fansly", "patreon", "loyalfans", "manyvids", "justforfans"]);
+  const platforms = new Set(PLATFORMS);
   const issues: Issue[] = [];
 
   for (const [field, text] of copyFields(listing)) {
-    const tokens = words(text, true);
-    const hit = tokens.some((_, i) =>
-      [1, 2, 3].some((width) => platforms.has(tokens.slice(i, i + width).join(""))),
+    const tokens = [...text.matchAll(/[a-z0-9]+/gi)].map((match) => ({
+      raw: match[0],
+      index: match.index,
+    }));
+    const hit = tokens.some((first, i) =>
+      [1, 2, 3].some((width) => {
+        const window = tokens.slice(i, i + width);
+        if (window.length < width) return false;
+        if (!platforms.has(leetFold(window.map((token) => token.raw).join("")).toLowerCase())) return false;
+        if (width === 1) return true;
+
+        const last = window[window.length - 1]!;
+        const span = text.slice(first.index, last.index + last.raw.length);
+        return (
+          /[013457]/.test(span) ||
+          /[^a-z0-9\s]/i.test(span) ||
+          window.every((token) => /^[A-Z]/.test(token.raw))
+        );
+      }),
     );
     if (hit) {
       issues.push({
@@ -215,16 +247,36 @@ function findDuplicateDescriptions(listings: AppListing[]): Issue[][] {
   const shingleSets = listings.map((listing) => {
     const ownName = new RegExp(`\\b${words(listing.name).join("\\W+")}\\b`, "i");
     const tokens = words(`${listing.description} ${listing.descriptionBody}`.replace(ownName, " "));
-    return new Set(tokens.slice(0, -2).map((_, i) => tokens.slice(i, i + 3).join(" ")));
+    return new Set(
+      tokens.slice(0, -(SHINGLE_SIZE - 1)).map((_, i) => tokens.slice(i, i + SHINGLE_SIZE).join(" ")),
+    );
+  });
+
+  const postings = new Map<string, number[]>();
+  shingleSets.forEach((shingles, i) => {
+    for (const shingle of shingles) {
+      const posting = postings.get(shingle);
+      if (posting) posting.push(i);
+      else postings.set(shingle, [i]);
+    }
   });
 
   const results: Issue[][] = listings.map(() => []);
   for (let i = 0; i < listings.length; i++) {
-    for (let j = i + 1; j < listings.length; j++) {
-      const [a, b] = [shingleSets[i]!, shingleSets[j]!];
-      if (a.size === 0 || b.size === 0) continue;
-      const shared = [...a].filter((shingle) => b.has(shingle)).length;
-      if (shared / (a.size + b.size - shared) < 0.5) continue;
+    const a = shingleSets[i]!;
+    if (a.size === 0) continue;
+
+    const sharedWith = new Map<number, number>();
+    for (const shingle of a) {
+      for (const j of postings.get(shingle)!) {
+        if (j > i) sharedWith.set(j, (sharedWith.get(j) ?? 0) + 1);
+      }
+    }
+
+    for (const j of [...sharedWith.keys()].sort((x, y) => x - y)) {
+      const b = shingleSets[j]!;
+      const shared = sharedWith.get(j)!;
+      if (shared / (a.size + b.size - shared) < DUPLICATE_THRESHOLD) continue;
       for (const [self, other] of [[i, j], [j, i]] as const) {
         results[self]!.push({
           code: "duplicate_description",

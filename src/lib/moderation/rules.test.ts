@@ -120,6 +120,31 @@ describe("moderation rules", () => {
     expect(findingsFor(fans)).toEqual([]);
   });
 
+  it.each([
+    ["tagline", "Grow your 0nlyFans"],
+    ["descriptionBody", "Popular on Only.Fans"],
+    ["descriptionBody", "Popular on Only Fans"],
+    ["descriptionBody", "Try fans-ly today"],
+    ["descriptionBody", "Just For Fans users"],
+    ["descriptionBody", "cross-post to OnlyFans"],
+    ["descriptionBody", "cross-post to Patreon"],
+  ])("flags a disguised platform mention in %s (1.6)", (field, text) => {
+    const listing: AppListing = { ...cleanListing, [field]: text };
+
+    expect(findingsFor(listing).map((issue) => issue.code)).toEqual(["platform_mention"]);
+  });
+
+  it.each([
+    "Just for fans of scheduling",
+    "the only fans-first scheduler",
+    "new fans every week",
+    "the only scheduler you need",
+  ])("does not flag plain prose %j (1.6)", (text) => {
+    const listing: AppListing = { ...cleanListing, descriptionBody: text };
+
+    expect(findingsFor(listing).filter((issue) => issue.rule === "1.6")).toEqual([]);
+  });
+
   it("flags a plan priced outside the supported range (3.3)", () => {
     const listing: AppListing = {
       ...cleanListing,

@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { Issue, Review } from "@/lib/moderation/rules";
 import { countBySeverity, sortQueue, worstSeverity } from "@/lib/moderation/queue";
 
-import { RunStatus } from "./RerunButton";
+import { RunStatus } from "./RunStatus";
 
 /**
  * The moderator's queue, sorted worst-first with a per-row status and rule summary.
