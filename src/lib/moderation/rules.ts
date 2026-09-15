@@ -41,7 +41,59 @@ export function reviewListings(listings: AppListing[]): Review[] {
 
 /** Every check that only needs the one listing in front of it. */
 function checkListing(listing: AppListing): Issue[] {
-  return [...checkScreenshotCount(listing)];
+  return [...checkScreenshotCount(listing), ...checkAppUrl(listing)];
+}
+
+/**
+ * Rule 6.2: "We reject a listing when the URL: is missing; is not `https`;
+ * has no host, or has an IP address for a host; is on `fanvue.com` or any
+ * subdomain of it; is on a domain-parking or site-builder placeholder host."
+ * And "A domain that merely has our name inside it is fine."
+ *
+ * `fix` because a developer can point the listing at a URL they own without
+ * anyone making a judgement call.
+ */
+function checkAppUrl(listing: AppListing): Issue[] {
+  const issue = (code: string, message: string): Issue => ({
+    code,
+    rule: "6.2",
+    severity: "fix",
+    message,
+    field: "appUrl",
+  });
+
+  if (listing.appUrl === null) {
+    return [issue("app_url_missing", "No appUrl; rule 6.2 needs a working address the developer owns.")];
+  }
+
+  let url: URL;
+  try {
+    url = new URL(listing.appUrl);
+  } catch {
+    return [issue("app_url_invalid", `appUrl "${listing.appUrl}" is not a parseable URL.`)];
+  }
+
+  const host = url.hostname;
+  const onDomain = (domain: string) => host === domain || host.endsWith(`.${domain}`);
+  const issues: Issue[] = [];
+
+  if (url.protocol !== "https:") {
+    issues.push(issue("app_url_not_https", `appUrl is ${url.protocol}//…; rule 6.2 requires https.`));
+  }
+  if (host === "" || /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":")) {
+    issues.push(issue("app_url_ip_host", `appUrl host "${host}" is an IP address, not a domain the developer owns.`));
+  }
+  if (onDomain("fanvue.com")) {
+    issues.push(issue("app_url_fanvue_domain", `appUrl is hosted on ${host}; the app must not live on fanvue.com.`));
+  }
+  const parkingHost = ["parkingcrew.net", "sedoparking.com", "afternic.com", "godaddysites.com", "wixsite.com"].find(
+    onDomain,
+  );
+  if (parkingHost) {
+    issues.push(issue("app_url_parking_host", `appUrl is on ${parkingHost}, a parking or site-builder placeholder host.`));
+  }
+
+  return issues;
 }
 
 /**

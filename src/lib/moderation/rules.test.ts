@@ -58,7 +58,33 @@ describe("moderation rules", () => {
     expect(findingsFor(padded).map((issue) => issue.rule)).toEqual(["2.3"]);
   });
 
-  // Your tests, one or more per rule you add. `npm run test:watch` and see each one fail first.
-  // `spec.test.ts` says which listings must end up flagged; these say why.
-  it.todo("flags a listing that breaks the next rule you pick");
+  it("flags a missing appUrl (6.2)", () => {
+    const listing: AppListing = { ...cleanListing, appUrl: null };
+
+    expect(findingsFor(listing).map((issue) => issue.code)).toEqual(["app_url_missing"]);
+  });
+
+  it("flags a fanvue.com subdomain but not a domain that merely names fanvue (6.2)", () => {
+    const onFanvue: AppListing = { ...cleanListing, appUrl: "https://fanradar.fanvue.com" };
+    const namedAfter: AppListing = { ...cleanListing, appUrl: "https://copilot-fanvue-tools.com" };
+
+    expect(findingsFor(onFanvue).map((issue) => issue.code)).toEqual(["app_url_fanvue_domain"]);
+    expect(findingsFor(namedAfter)).toEqual([]);
+  });
+
+  it("flags plain http and a parking host as two findings (6.2)", () => {
+    const listing: AppListing = { ...cleanListing, appUrl: "http://x.parkingcrew.net" };
+
+    expect(findingsFor(listing).map((issue) => issue.code).sort()).toEqual(
+      ["app_url_not_https", "app_url_parking_host"].sort(),
+    );
+  });
+
+  it("flags an IP address host but not a port (6.2)", () => {
+    const ipHost: AppListing = { ...cleanListing, appUrl: "https://1.2.3.4" };
+    const withPort: AppListing = { ...cleanListing, appUrl: "https://example.com:3000/path" };
+
+    expect(findingsFor(ipHost).map((issue) => issue.code)).toEqual(["app_url_ip_host"]);
+    expect(findingsFor(withPort)).toEqual([]);
+  });
 });
