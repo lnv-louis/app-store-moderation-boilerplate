@@ -45,6 +45,7 @@ function checkListing(listing: AppListing): Issue[] {
     ...checkPlatformMentions(listing),
     ...checkProductionReady(listing),
     ...checkScreenshotCount(listing),
+    ...checkPricingAccuracy(listing),
     ...checkAppUrl(listing),
   ];
 }
@@ -135,6 +136,64 @@ function checkProductionReady(listing: AppListing): Issue[] {
       message: "No listing highlights; rule 2.1 reads that as a half-written submission.",
       field: "highlights",
     });
+  }
+
+  return issues;
+}
+
+/**
+ * Rule 3.3: "A plan priced outside the supported range… A price in the copy
+ * that no plan matches… A free tier that does not exist." The range is
+ * $3.99–$500.00 (pricing-plans.md); only `active` and `pending_setup` plans
+ * can satisfy a copy claim — a withdrawn plan is still range-checked but is
+ * not purchasable.
+ *
+ * `fix` because correcting the price or the copy is mechanical.
+ */
+function checkPricingAccuracy(listing: AppListing): Issue[] {
+  const issues: Issue[] = [];
+  const purchasable = listing.pricingPlans.filter((plan) => plan.status !== "withdrawn");
+
+  listing.pricingPlans.forEach((plan, i) => {
+    if (plan.billingType !== "free" && (plan.price < 399 || plan.price > 50000)) {
+      issues.push({
+        code: "plan_price_out_of_range",
+        rule: "3.3",
+        severity: "fix",
+        message: `Plan "${plan.name}" is $${(plan.price / 100).toFixed(2)}; supported range is $3.99–$500.00.`,
+        field: `pricingPlans[${i}].price`,
+      });
+    }
+  });
+
+  const priceMentions = /\$\s?(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s?usd\b/g;
+  for (const [field, text] of copyFields(listing)) {
+    const seen = new Set<number>();
+    for (const match of text.toLowerCase().matchAll(priceMentions)) {
+      const cents = Math.round(parseFloat(match[1] ?? match[2]!) * 100);
+      if (!seen.has(cents) && !purchasable.some((plan) => plan.price === cents)) {
+        seen.add(cents);
+        issues.push({
+          code: "copy_price_unmatched",
+          rule: "3.3",
+          severity: "fix",
+          message: `${field} quotes $${(cents / 100).toFixed(2)} but no active plan costs that.`,
+          field,
+        });
+      }
+    }
+    if (
+      /\bfree (plan|tier|forever|to start)\b/.test(text.toLowerCase()) &&
+      !purchasable.some((plan) => plan.billingType === "free" || plan.price === 0)
+    ) {
+      issues.push({
+        code: "free_tier_missing",
+        rule: "3.3",
+        severity: "fix",
+        message: `${field} advertises a free tier but the listing has no free plan.`,
+        field,
+      });
+    }
   }
 
   return issues;

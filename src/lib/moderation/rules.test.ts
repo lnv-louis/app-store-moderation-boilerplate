@@ -119,4 +119,47 @@ describe("moderation rules", () => {
     expect(findingsFor(only)).toEqual([]);
     expect(findingsFor(fans)).toEqual([]);
   });
+
+  it("flags a plan priced outside the supported range (3.3)", () => {
+    const listing: AppListing = {
+      ...cleanListing,
+      pricingPlans: [{ ...cleanListing.pricingPlans[0]!, price: 55000 }],
+    };
+
+    expect(findingsFor(listing).map((issue) => issue.code)).toEqual(["plan_price_out_of_range"]);
+  });
+
+  it("flags a copy price no active plan matches, but not one that does (3.3)", () => {
+    const unmatched: AppListing = { ...cleanListing, descriptionBody: "Plans start at $2.99 a month." };
+    const matched: AppListing = { ...cleanListing, descriptionBody: "The Pro plan is $9.99 a month." };
+
+    expect(findingsFor(unmatched).map((issue) => issue.code)).toEqual(["copy_price_unmatched"]);
+    expect(findingsFor(matched)).toEqual([]);
+  });
+
+  it("flags a free tier claim with no free plan (3.3)", () => {
+    const listing: AppListing = {
+      ...cleanListing,
+      descriptionBody: "Start on the free forever tier and upgrade later.",
+    };
+
+    expect(findingsFor(listing).map((issue) => issue.code)).toEqual(["free_tier_missing"]);
+  });
+
+  it("range-checks a withdrawn plan but does not let it satisfy copy (3.3)", () => {
+    const withdrawn = { ...cleanListing.pricingPlans[0]!, price: 65000, status: "withdrawn" as const };
+    const listing: AppListing = {
+      ...cleanListing,
+      descriptionBody: "The Pro plan is $14.99 a month.",
+      pricingPlans: [{ ...cleanListing.pricingPlans[0]!, price: 1499 }, withdrawn],
+    };
+    const onlyWithdrawn: AppListing = {
+      ...cleanListing,
+      descriptionBody: "The Pro plan is $9.99 a month.",
+      pricingPlans: [{ ...cleanListing.pricingPlans[0]!, status: "withdrawn" }],
+    };
+
+    expect(findingsFor(listing).map((issue) => issue.code)).toEqual(["plan_price_out_of_range"]);
+    expect(findingsFor(onlyWithdrawn).map((issue) => issue.code)).toEqual(["copy_price_unmatched"]);
+  });
 });
