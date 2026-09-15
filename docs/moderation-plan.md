@@ -158,6 +158,111 @@ Per rule: one positive taken from the named fixture's trap, one negative for the
 | 4.2 | two listings, identical description, body differing by one word → both flagged | two unrelated listings → none |
 | 6.2 | `http://`; `fanradar.fanvue.com`; `x.parkingcrew.net`; `null`; `https://1.2.3.4` | `copilot-fanvue-tools.com`; `https://example.com:3000/path` |
 
+## Performance, measured
+
+On the 2,011 fixtures (vitest, warm, three runs):
+
+| Stage | Time |
+|---|---|
+| `getAllApps()` | 81 ms |
+| `reviewListings` without 4.2 | ~10 ms (URL parsing alone: 1 ms) |
+| `reviewListings` with 4.2 as committed in `60591a6` | ~2,000 ms, stable |
+
+Fetch is not the problem. 4.2 is, and both pages pay it on every request: the detail page
+re-reviews the whole store to show one listing. The fix is exact (same Jaccard, same output),
+so it adds no assumption.
+
+### Step P1 — index 4.2 (`rules.ts`)
+
+Replace the all-pairs loop with an inverted index `shingle → listing indices`. For each
+listing `i`, walk its shingles' postings and count shared shingles per `j > i` in a
+`Map<number, number>`; compute Jaccard only for pairs that share at least one shingle.
+Hoist `DUPLICATE_THRESHOLD = 0.5` and `SHINGLE_SIZE = 3` to named consts at the top of the
+file, marked as assumptions.
+
+Verify: `npm run test:spec` (Copilot pair still both flagged), then re-measure. Expect tens
+of ms. If still slow, add the exact size prune `shared >= (|A| + |B|) / 3` before computing
+Jaccard. MinHash/LSH stays the "in production" answer; do not build it.
+
+### Step P2 — compute once, as a job (`src/lib/moderation/job.ts`)
+
+```ts
+export type ModerationRun = {
+  ranAt: string;
+  durationMs: number;
+  reviews: Review[];
+  byUuid: Map<string, Review>;
+};
+
+let latest: ModerationRun | null = null;
+export function runModeration(listings = getAllApps()): ModerationRun; // compute, store, return
+export function getModerationRun(): ModerationRun;                      // latest ?? runModeration()
+```
+
+This is what a cron would produce: one timestamped run the pages read. A scheduled trigger
+is one line (`setInterval(runModeration, ms)`); not needed for the demo, the button in P3
+is the visible equivalent. Caveats to say if asked: module state is per server process
+(dev HMR can reset it), and `next build` prerenders `/` with one run at build time.
+
+Pages:
+- `app/page.tsx`: `const run = getModerationRun()` → `<ReviewQueue rows={run.reviews} ranAt={run.ranAt} durationMs={run.durationMs} />`
+- `app/listings/[uuid]/page.tsx`: `getModerationRun().byUuid.get(listing.uuid)` instead of re-reviewing.
+
+Outside the README's "Where to work" table: `job.ts` and the two page files. The pages are
+already the seam that calls `reviewListings`, so there is no other place. Say so.
+
+### Step P3 — run trigger and run header (`ReviewQueue.tsx`)
+
+`ReviewQueue` is a server component; an inline server action needs no new files:
+
+```tsx
+async function rerun() { "use server"; runModeration(); revalidatePath("/"); }
+```
+
+Header gains `Last run {time} · {n} listings · {durationMs} ms` and a `Run checks now`
+button bound to `rerun`.
+
+## UI: the moderator's screen
+
+State as of `60591a6` plus the uncommitted `ReviewQueue.tsx` work:
+
+- **Queue (`/`)**: wired and styled. Worst-first sort, per-severity counts, status badge
+  with finding count, rules column. Done apart from P3.
+- **Detail (`/listings/[uuid]`)**: wired (`ListingDetail` passes `issues` to `FindingsList`)
+  but `FindingsList` is still the boilerplate list, and its `// TODO: this is ambiguous`
+  on "No findings" is unaddressed. That TODO is the assessed part of the screen.
+
+### Step U1 — `FindingsList.tsx`
+
+Props: `{ issues: Issue[]; checked: boolean }`. `checked` is `byUuid.has(uuid)` from the
+run; with P2 every listing is checked, but the component must still render the distinction.
+
+- `checked && issues.length === 0` → "Passed every automated check" (green).
+- `!checked` → "Not checked yet" (grey).
+- Otherwise, group by severity in `SEVERITY_ORDER`. Each group: the badge used on the
+  queue (reuse `StatusBadge` styling; lift it to a shared component if needed), and a line
+  per finding with: rule number linking to `docs/listing-requirements.md#<anchor>`, the
+  message, the `field` in monospace, and what happens next, one phrase per severity:
+  - `reject` → "Listing is rejected; the developer resubmits."
+  - `fix` → "Approve with fixes; the developer is asked to correct this."
+  - `warn` → "Needs a human decision."
+
+The three phrases come from §4.5 (accept-with-fixes vs rejection) and §4.2 ("a human
+decides"). Anything beyond that is the candidate's call, not the doc's.
+
+## Test it by hand
+
+1. `npm run test:spec` after P1: acceptance green, Copilot pair both flagged.
+2. `npm run dev`, open `/`: run header shows time and duration. Reject band first, so
+   Audience Boost (1.6) is at the top; then the `fix` rows (LinkPulse, Clip Cutter, Caption
+   Forge, Fan Radar, Studio Ledger); then the two Copilot `warn`s.
+3. Click LinkPulse: 2.1 and 6.2 findings grouped by severity, page loads without recomputing.
+4. Click an all-clear listing (Insight Deck, Post Planner, Vault Tidy): "Passed every
+   automated check", not "No findings".
+5. `Run checks now`: timestamp changes, duration stays small.
+
 ## Order
 
-6.2 → 2.1 → 1.6 → 3.3 → 4.2 → queue. One commit each.
+Rules: 6.2 → 2.1 → 1.6 → 3.3 → 4.2 (done through `60591a6`) → queue (in progress).
+Then P1 → P2 → P3 → U1. One commit each. If time runs out, P1 and U1 are the two that
+matter: P1 because every page is 2 s without it, U1 because it is the screen being assessed.
