@@ -162,4 +162,38 @@ describe("moderation rules", () => {
     expect(findingsFor(listing).map((issue) => issue.code)).toEqual(["plan_price_out_of_range"]);
     expect(findingsFor(onlyWithdrawn).map((issue) => issue.code)).toEqual(["copy_price_unmatched"]);
   });
+
+  it("flags near-duplicate descriptions on both listings (4.2)", () => {
+    const first: AppListing = { ...cleanListing, name: "Creator Copilot" };
+    const second: AppListing = {
+      ...cleanListing,
+      uuid: "00000000-0000-4000-8000-00000000c2ec",
+      name: "Copilot for Creators",
+      descriptionBody: cleanListing.descriptionBody.replace("upcoming week", "upcoming month"),
+    };
+
+    const reviews = reviewListings([first, second]);
+
+    for (const [review, other] of [
+      [reviews[0]!, second.name],
+      [reviews[1]!, first.name],
+    ] as const) {
+      const issues = review.issues.filter((issue) => issue.code === "duplicate_description");
+      expect(issues).toHaveLength(1);
+      expect(issues[0]!.message).toContain(other);
+    }
+  });
+
+  it("does not flag unrelated descriptions (4.2)", () => {
+    const other: AppListing = {
+      ...cleanListing,
+      uuid: "00000000-0000-4000-8000-00000000c3ed",
+      name: "Studio Ledger",
+      description: "Categorise earnings, track expenses and export a tidy summary for your accountant.",
+      descriptionBody:
+        "Studio Ledger sorts every payout into categories, keeps receipts against the right month and exports a summary your accountant can work from.",
+    };
+
+    expect(reviewListings([cleanListing, other]).flatMap((review) => review.issues)).toEqual([]);
+  });
 });

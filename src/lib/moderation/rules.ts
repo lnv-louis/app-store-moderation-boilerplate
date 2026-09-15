@@ -36,7 +36,8 @@ export type Review = {
  * Pure: no I/O, and the same input always gives the same output.
  */
 export function reviewListings(listings: AppListing[]): Review[] {
-  return listings.map((listing) => ({ listing, issues: checkListing(listing) }));
+  const duplicates = findDuplicateDescriptions(listings); // 4.2, Issue[][] aligned to input
+  return listings.map((listing, i) => ({ listing, issues: [...checkListing(listing), ...duplicates[i]!] }));
 }
 
 /** Every check that only needs the one listing in front of it. */
@@ -197,6 +198,45 @@ function checkPricingAccuracy(listing: AppListing): Issue[] {
   }
 
   return issues;
+}
+
+/**
+ * Rule 4.2: "Compare on `description` and `descriptionBody`, ignoring case,
+ * punctuation and the app's own name… Two listings that match each other are
+ * both flagged."
+ *
+ * Each listing's own name is stripped as a phrase, then 3-word shingles are
+ * compared by Jaccard similarity; pairs at or above 0.5 flag both members.
+ *
+ * `warn` because §4.2 says "a human decides which of them was first" — the
+ * tool can only point at the pair.
+ */
+function findDuplicateDescriptions(listings: AppListing[]): Issue[][] {
+  const shingleSets = listings.map((listing) => {
+    const ownName = new RegExp(`\\b${words(listing.name).join("\\W+")}\\b`, "i");
+    const tokens = words(`${listing.description} ${listing.descriptionBody}`.replace(ownName, " "));
+    return new Set(tokens.slice(0, -2).map((_, i) => tokens.slice(i, i + 3).join(" ")));
+  });
+
+  const results: Issue[][] = listings.map(() => []);
+  for (let i = 0; i < listings.length; i++) {
+    for (let j = i + 1; j < listings.length; j++) {
+      const [a, b] = [shingleSets[i]!, shingleSets[j]!];
+      if (a.size === 0 || b.size === 0) continue;
+      const shared = [...a].filter((shingle) => b.has(shingle)).length;
+      if (shared / (a.size + b.size - shared) < 0.5) continue;
+      for (const [self, other] of [[i, j], [j, i]] as const) {
+        results[self]!.push({
+          code: "duplicate_description",
+          rule: "4.2",
+          severity: "warn",
+          message: `Description is a near-copy of "${listings[other]!.name}"; a human decides which came first.`,
+          field: "description",
+        });
+      }
+    }
+  }
+  return results;
 }
 
 /**
