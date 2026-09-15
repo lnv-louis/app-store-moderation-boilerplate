@@ -1,28 +1,23 @@
 import Link from "next/link";
 
-import type { Review } from "@/lib/moderation/rules";
+import type { Issue, Review } from "@/lib/moderation/rules";
+import { countBySeverity, sortQueue, worstSeverity } from "@/lib/moderation/queue";
 
 /**
- * The moderator's queue, and the product you are building. Deliberately bare:
- * it renders every listing in submission order and calls anything with no
- * findings "Not checked".
- *
- * TODO (yours):
- * - Status per app. A listing with no findings today is one nothing has
- *   checked; once your rules run it might also be one that passed everything.
- *   Decide how a moderator tells those apart.
- * - Order. Worst first — `src/lib/moderation/queue.ts` has the stubs.
- * - Whatever else someone clearing a backlog of two thousand needs: counts by
- *   severity, which rule fired, filters, and a table this long that still
- *   feels quick.
- *
- * Plain HTML is fine. `@fanvue/ui` is installed if you want it.
+ * The moderator's queue, sorted worst-first with a per-row status and rule summary.
  */
 export function ReviewQueue({ rows }: { rows: Review[] }) {
+  const sorted = sortQueue(rows);
+  const counts = countBySeverity(rows);
+
   return (
     <section className="flex flex-col gap-4">
       <h1 className="text-2xl font-semibold">Review queue</h1>
-      <p>{rows.length} listings awaiting review. Open one to see the full listing.</p>
+      <p>
+        {rows.length.toLocaleString()} listings · {counts.reject.toLocaleString()} reject ·{" "}
+        {counts.fix.toLocaleString()} fix · {counts.warn.toLocaleString()} warn ·{" "}
+        {counts.passed.toLocaleString()} passed
+      </p>
 
       <table className="w-full border-collapse text-left text-sm">
         <thead>
@@ -31,28 +26,66 @@ export function ReviewQueue({ rows }: { rows: Review[] }) {
             <th className="py-2 pr-4">Developer</th>
             <th className="py-2 pr-4">Pricing</th>
             <th className="py-2 pr-4">Screenshots</th>
-            {/* TODO: status of the worst finding, or Not checked / No findings */}
+            <th className="py-2 pr-4">Rules</th>
             <th className="py-2 pr-4">Status</th>
           </tr>
         </thead>
         <tbody>
-          {/* TODO: sort rows before rendering */}
-          {rows.map(({ listing, issues }) => (
+          {sorted.map(({ listing, issues }) => (
             <tr key={listing.uuid} className="border-b">
               <td className="py-2 pr-4">
                 <Link href={`/listings/${listing.uuid}`} className="underline">
                   {listing.name}
                 </Link>
               </td>
-              <td className="py-2 pr-4">{listing.developer.handle ? `@${listing.developer.handle}` : "-"}</td>
+              <td className="py-2 pr-4">
+                {listing.developer.handle ? `@${listing.developer.handle}` : "-"}
+              </td>
               <td className="py-2 pr-4">{listing.pricingType}</td>
               <td className="py-2 pr-4">{listing.previewImageUrls.length}</td>
-              {/* TODO: replace with a real status */}
-              <td className="py-2 pr-4">{issues.length === 0 ? "Not checked" : `${issues.length} findings`}</td>
+              <td className="py-2 pr-4">
+                {issues.length > 0
+                  ? [...new Set(issues.map((issue) => issue.rule))].join(", ")
+                  : "-"}
+              </td>
+              <td className="py-2 pr-4">
+                <StatusBadge issues={issues} />
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
     </section>
+  );
+}
+
+function StatusBadge({ issues }: { issues: Issue[] }) {
+  const severity = worstSeverity(issues);
+
+  const styles = {
+    reject: "bg-red-100 text-red-700",
+    fix: "bg-amber-100 text-amber-700",
+    warn: "bg-slate-100 text-slate-700",
+    passed: "bg-green-100 text-green-700",
+  } as const;
+
+  if (severity === null) {
+    return (
+      <span
+        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${styles.passed}`}
+      >
+        Passed
+      </span>
+    );
+  }
+
+  const label = `${severity}${issues.length > 0 ? ` · ${issues.length}` : ""}`;
+
+  return (
+    <span
+      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${styles[severity]}`}
+    >
+      {label}
+    </span>
   );
 }
